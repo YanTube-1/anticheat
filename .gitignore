@@ -1,0 +1,32 @@
+# Gradle
+.gradle/
+build/
+
+# Lokale Toolchains (zu gross fuer Git; Gradle Wrapper oder CI nutzen)
+_jdk8/
+_gradle-4.9/
+gradle-4.9.zip
+
+# Forge Client-Run
+run/
+
+# Logs
+logs
+logs/
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.ipr
+*.iws
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
