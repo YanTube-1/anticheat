@@ -56,9 +56,11 @@ public final class ClientAntiCheatMod {
     @SubscribeEvent
     public void onEntityJoinWorld(EntityJoinWorldEvent event) {
         if (!(event.getEntity() instanceof EntityPlayerSP)) return;
-        // Singleplayer: kein Suppress – nur Multiplayer braucht Registry-Sync-Pause
-        if (Minecraft.getMinecraft().isIntegratedServerRunning()) return;
-        InjectionDetector.get().suppressForWorldLoad(0);
+        if (Minecraft.getMinecraft().isIntegratedServerRunning()) {
+            InjectionDetector.get().onSingleplayerOrDisconnect();
+        } else {
+            InjectionDetector.get().onMultiplayerJoin();
+        }
     }
 
     // ── Alert-Handler (kein Chat, nur Discord) ────────────────────────────────

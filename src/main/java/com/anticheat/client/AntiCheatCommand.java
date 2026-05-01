@@ -47,6 +47,10 @@ public final class AntiCheatCommand extends CommandBase {
             case "status": {
                 InjectionDetector.StatusSnapshot s = InjectionDetector.get().getStatus();
 
+                if (!s.detectionEnabled) {
+                    msg("§7[AntiCheat] §8Inaktiv §7– nur im Multiplayer aktiv.");
+                    return;
+                }
                 if (!s.baselineTaken) {
                     msg("§e[AntiCheat] Baseline noch nicht genommen (warte ~10s nach Start)...");
                     return;
@@ -70,6 +74,7 @@ public final class AntiCheatCommand extends CommandBase {
             case "info": {
                 InjectionDetector.StatusSnapshot s = InjectionDetector.get().getStatus();
                 msg("§6§l─ AntiCheat 2.0 – JVM Info ─");
+                if (!s.detectionEnabled) { msg("§8Status: Inaktiv (Singleplayer)"); return; }
                 if (s.baselineTaken) {
                     msg("§7Baseline Klassen : §f" + s.baselineClasses
                             + "  §7Threads: §f" + s.baselineThreads);

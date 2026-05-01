@@ -42,6 +42,8 @@ public final class InjectionDetector {
     private volatile long    startTime        = 0L;
     private          long    tickCount        = 0L;
     private volatile boolean mainMenuReached  = false;
+    private volatile boolean detectionEnabled = false;
+
     private volatile boolean suppressActive  = false;
     private volatile long    suppressStartMs = 0L;
     private static final long SUPPRESS_MIN_MS = 5_000L;
@@ -83,11 +85,22 @@ public final class InjectionDetector {
         startTime = System.currentTimeMillis();
     }
 
-    public void suppressForWorldLoad(long ignoredDuration) {
-        suppressActive  = true;
-        suppressStartMs = System.currentTimeMillis();
+    public void onMultiplayerJoin() {
+        detectionEnabled = true;
+        suppressActive   = true;
+        suppressStartMs  = System.currentTimeMillis();
+        cheatDetected    = false;
+        lastAlertTs      = 0L;
         synchronized (window) { window.clear(); }
     }
+
+    public void onSingleplayerOrDisconnect() {
+        detectionEnabled = false;
+        suppressActive   = false;
+        synchronized (window) { window.clear(); }
+    }
+
+    public void suppressForWorldLoad(long ignoredDuration) { onMultiplayerJoin(); }
 
     public void notifyModsLoaded() {
         if (mainMenuReached) return;
@@ -98,7 +111,7 @@ public final class InjectionDetector {
 
     public StatusSnapshot getStatus() {
         return new StatusSnapshot(
-                cheatDetected, baselineTaken,
+                detectionEnabled, cheatDetected, baselineTaken,
                 baselineClasses, baselineThreads,
                 currentClasses(), currentThreads(),
                 lastAlertReason, lastDeltaClasses, lastDeltaThreads);
@@ -114,16 +127,18 @@ public final class InjectionDetector {
         int  curClasses = currentClasses();
         int  curThreads = currentThreads();
 
-        synchronized (window) {
-            window.add(new long[]{ now, curClasses });
-            while (!window.isEmpty() && window.peek()[0] < now - WINDOW_MS) {
-                window.poll();
-            }
-        }
-
         if (!baselineTaken) {
+            synchronized (window) {
+                window.add(new long[]{ now, curClasses });
+                while (!window.isEmpty() && window.peek()[0] < now - WINDOW_MS) window.poll();
+            }
             tryTakeBaseline(now, curClasses, curThreads);
         } else {
+            if (!detectionEnabled) return;
+            synchronized (window) {
+                window.add(new long[]{ now, curClasses });
+                while (!window.isEmpty() && window.peek()[0] < now - WINDOW_MS) window.poll();
+            }
             detectInject(now, curClasses, curThreads);
         }
     }
@@ -237,6 +252,7 @@ public final class InjectionDetector {
     }
 
     public static final class StatusSnapshot {
+        public final boolean detectionEnabled;
         public final boolean cheatDetected;
         public final boolean baselineTaken;
         public final int     baselineClasses;
@@ -247,11 +263,12 @@ public final class InjectionDetector {
         public final int     lastDeltaClasses;
         public final int     lastDeltaThreads;
 
-        StatusSnapshot(boolean cheatDetected, boolean baselineTaken,
+        StatusSnapshot(boolean detectionEnabled, boolean cheatDetected, boolean baselineTaken,
                        int baselineClasses, int baselineThreads,
                        int currentClasses,  int currentThreads,
                        String lastAlertReason,
                        int lastDeltaClasses, int lastDeltaThreads) {
+            this.detectionEnabled = detectionEnabled;
             this.cheatDetected    = cheatDetected;
             this.baselineTaken    = baselineTaken;
             this.baselineClasses  = baselineClasses;

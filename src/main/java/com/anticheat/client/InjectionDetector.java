@@ -67,11 +67,14 @@ public final class InjectionDetector {
     private volatile boolean mainMenuReached  = false;
 
     /**
+     * Erkennung nur aktiv wenn Multiplayer-Server beigetreten.
+     * In Singleplayer komplett deaktiviert.
+     */
+    private volatile boolean detectionEnabled = false;
+
+    /**
      * Adaptive Suppression: Erkennung pausiert bis der Klassen-Count nach
-     * Welt-Beitritt wieder stabil ist – kein fester Timer.
-     * suppressStartMs: Zeitpunkt des Welt-Beitritts.
-     * SUPPRESS_MIN_MS: Mindestdauer (Schutz vor zu frühem Ablauf).
-     * SUPPRESS_MAX_MS: Sicherheitsnetz (nie länger als X pausieren).
+     * Server-Beitritt wieder stabil ist – kein fester Timer.
      */
     private volatile boolean suppressActive  = false;
     private volatile long    suppressStartMs = 0L;
@@ -135,16 +138,31 @@ public final class InjectionDetector {
      * Ab jetzt ist Minecraft vollständig initialisiert; Baseline in ~10s.
      */
     /**
-     * Adaptive Suppression starten.
-     * Kein fester Timer – Erkennung läuft wieder sobald Klassenladerate stabil ist.
-     * Wird aufgerufen wenn der lokale Spieler einer Welt beitritt.
+     * Multiplayer-Server beigetreten: Erkennung aktivieren mit adaptiver Suppression
+     * für den Registry-Sync-Spike (kein fester Timer).
      */
-    public void suppressForWorldLoad(long ignoredDuration) {
-        suppressActive  = true;
-        suppressStartMs = System.currentTimeMillis();
+    public void onMultiplayerJoin() {
+        detectionEnabled = true;
+        suppressActive   = true;
+        suppressStartMs  = System.currentTimeMillis();
+        cheatDetected    = false;
+        lastAlertTs      = 0L;
         synchronized (window) { window.clear(); }
-        LOG.info("=== Adaptive Suppression gestartet (Welt-Beitritt) – Fenster geleert ===");
+        LOG.info("=== Multiplayer-Join: Erkennung aktiv, adaptive Suppression läuft ===");
     }
+
+    /**
+     * Singleplayer oder Disconnect: Erkennung vollständig deaktivieren.
+     */
+    public void onSingleplayerOrDisconnect() {
+        detectionEnabled = false;
+        suppressActive   = false;
+        synchronized (window) { window.clear(); }
+        LOG.info("=== Singleplayer / Disconnect: Erkennung deaktiviert ===");
+    }
+
+    /** @deprecated Verwende onMultiplayerJoin() */
+    public void suppressForWorldLoad(long ignoredDuration) { onMultiplayerJoin(); }
 
     public void notifyModsLoaded() {
         if (mainMenuReached) return;
@@ -157,7 +175,7 @@ public final class InjectionDetector {
 
     public StatusSnapshot getStatus() {
         return new StatusSnapshot(
-                cheatDetected, baselineTaken,
+                detectionEnabled, cheatDetected, baselineTaken,
                 baselineClasses, baselineThreads,
                 currentClasses(), currentThreads(),
                 lastAlertReason, lastDeltaClasses, lastDeltaThreads);
@@ -174,14 +192,13 @@ public final class InjectionDetector {
         int  curThreads = currentThreads();
         long elapsedSec = (now - startTime) / 1000;
 
-        synchronized (window) {
-            window.add(new long[]{ now, curClasses });
-            while (!window.isEmpty() && window.peek()[0] < now - WINDOW_MS) {
-                window.poll();
-            }
-        }
-
+        // Baseline-Phase läuft immer (JVM-State für spätere Erkennung nötig)
+        // Aktive Erkennung nur im Multiplayer
         if (!baselineTaken) {
+            synchronized (window) {
+                window.add(new long[]{ now, curClasses });
+                while (!window.isEmpty() && window.peek()[0] < now - WINDOW_MS) window.poll();
+            }
             if (!mainMenuReached) {
                 // Noch nicht bereit – nur alle 10s loggen
                 if (tickCount % 10 == 0) {
@@ -203,7 +220,14 @@ public final class InjectionDetector {
             }
             tryTakeBaseline(now, curClasses, curThreads);
         } else {
-            // Im Erkennungsmodus: alle 10s ein Heartbeat
+            // Nur im Multiplayer aktiv
+            if (!detectionEnabled) return;
+
+            synchronized (window) {
+                window.add(new long[]{ now, curClasses });
+                while (!window.isEmpty() && window.peek()[0] < now - WINDOW_MS) window.poll();
+            }
+
             if (tickCount % 10 == 0) {
                 int deltaBaseline = curClasses - baselineClasses;
                 int deltaThreads  = curThreads  - baselineThreads;
@@ -216,6 +240,8 @@ public final class InjectionDetector {
             detectInject(now, curClasses, curThreads);
         }
     }
+
+    public boolean isDetectionEnabled() { return detectionEnabled; }
 
     // ── Baseline: warten bis Klassen-Count stabil ist ───────────────────────
 
@@ -367,6 +393,7 @@ public final class InjectionDetector {
     // ── Datenklasse ─────────────────────────────────────────────────────────
 
     public static final class StatusSnapshot {
+        public final boolean detectionEnabled;
         public final boolean cheatDetected;
         public final boolean baselineTaken;
         public final int     baselineClasses;
@@ -377,11 +404,12 @@ public final class InjectionDetector {
         public final int     lastDeltaClasses;
         public final int     lastDeltaThreads;
 
-        StatusSnapshot(boolean cheatDetected, boolean baselineTaken,
+        StatusSnapshot(boolean detectionEnabled, boolean cheatDetected, boolean baselineTaken,
                        int baselineClasses, int baselineThreads,
                        int currentClasses,  int currentThreads,
                        String lastAlertReason,
                        int lastDeltaClasses, int lastDeltaThreads) {
+            this.detectionEnabled = detectionEnabled;
             this.cheatDetected    = cheatDetected;
             this.baselineTaken    = baselineTaken;
             this.baselineClasses  = baselineClasses;

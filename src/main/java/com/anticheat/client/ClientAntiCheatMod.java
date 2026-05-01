@@ -82,11 +82,14 @@ public final class ClientAntiCheatMod {
     @SubscribeEvent
     public void onEntityJoinWorld(EntityJoinWorldEvent event) {
         if (!(event.getEntity() instanceof EntityPlayerSP)) return;
-        // Singleplayer: kein Suppress – Mods laden sich dort nicht neu
-        // Multiplayer: Registry-Sync, Mods, Physics-Welt → adaptive Suppression
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc.isIntegratedServerRunning()) return;
-        InjectionDetector.get().suppressForWorldLoad(0);
+        if (mc.isIntegratedServerRunning()) {
+            // Singleplayer → Erkennung komplett aus
+            InjectionDetector.get().onSingleplayerOrDisconnect();
+        } else {
+            // Multiplayer → Erkennung an, adaptive Suppression für Server-Beitritt
+            InjectionDetector.get().onMultiplayerJoin();
+        }
     }
 
     // ── Alert-Handler ────────────────────────────────────────────────────────
