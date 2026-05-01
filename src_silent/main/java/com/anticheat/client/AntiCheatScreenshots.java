@@ -1,12 +1,6 @@
 package com.anticheat.client;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.security.DigestInputStream;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,8 +22,9 @@ import net.minecraftforge.fml.relauncher.Side;
 
 /**
  * Screenshot-Burst bei Cheat-Erkennung: 0 s, 5 s, 10 s, 30 s.
- * Nach dem letzten Bild wird ein optionaler Callback mit allen gespeicherten
- * File-Objekten aufgerufen (z. B. fuer den Discord-Report).
+ *
+ * Silent-Version: Dateien werden im System-Temp-Verzeichnis gespeichert
+ * und nach dem Discord-Upload automatisch gelöscht.
  */
 public final class AntiCheatScreenshots {
 
@@ -38,39 +33,37 @@ public final class AntiCheatScreenshots {
     private static final List<ScheduledFuture<?>> pendingBurst = new ArrayList<>(4);
     private static volatile boolean screenshotsEnabled = true;
 
-    /** Gespeicherte Dateien des aktuellen Bursts (thread-safe). */
     private static final List<File> currentBurstFiles = new CopyOnWriteArrayList<>();
-    /** Callback, der nach dem letzten Screenshot aufgerufen wird. */
     private static volatile Consumer<List<File>> burstCompleteCallback = null;
 
     private AntiCheatScreenshots() {}
 
-    // ── Öffentliche API ─────────────────────────────────────────────────────
-
     public static boolean isScreenshotsEnabled() { return screenshotsEnabled; }
     public static void    setScreenshotsEnabled(boolean on) { screenshotsEnabled = on; }
-    public static boolean toggleScreenshotsEnabled() {
-        screenshotsEnabled = !screenshotsEnabled;
-        return screenshotsEnabled;
-    }
 
     /**
      * Plant einen 4-Bilder-Burst (0 / 5 / 10 / 30 s).
-     * {@code onComplete} wird nach dem 30-s-Bild mit allen gespeicherten Files aufgerufen.
+     * Dateien landen im System-Temp; nach Callback werden sie gelöscht.
      */
     public static void scheduleCapture(Consumer<List<File>> onComplete) {
         if (!screenshotsEnabled) return;
         if (FMLCommonHandler.instance().getSide() != Side.CLIENT) return;
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null) return;
-        burstCompleteCallback = onComplete;
+        // Callback + Auto-Delete wrappen
+        burstCompleteCallback = files -> {
+            if (onComplete != null) {
+                try { onComplete.accept(files); } catch (Throwable ignored) {}
+            }
+            // Dateien nach Upload löschen
+            for (File f : files) {
+                try { if (f != null && f.isFile()) f.delete(); } catch (Throwable ignored) {}
+            }
+        };
         mc.addScheduledTask(AntiCheatScreenshots::scheduleBurstFromClientThread);
     }
 
-    /** Kompatibilitäts-Overload ohne Callback (für ältere Aufrufer). */
-    public static void scheduleCapture() {
-        scheduleCapture(null);
-    }
+    public static void scheduleCapture() { scheduleCapture(null); }
 
     // ── Interna ─────────────────────────────────────────────────────────────
 
@@ -88,13 +81,10 @@ public final class AntiCheatScreenshots {
             String session = new SimpleDateFormat("yyyy-MM-dd_HH.mm.ss-SSS", Locale.ROOT)
                     .format(new Date());
 
-            // Sofort (0 s)
             captureToFile(session, "0s", false);
-
-            // Zeitversetzt – letzter ruft Callback auf
             pendingBurst.add(scheduleLater(session, "5s",  5L,  false));
             pendingBurst.add(scheduleLater(session, "10s", 10L, false));
-            pendingBurst.add(scheduleLater(session, "30s", 30L, true ));  // isLast=true
+            pendingBurst.add(scheduleLater(session, "30s", 30L, true));
         }
     }
 
@@ -111,23 +101,33 @@ public final class AntiCheatScreenshots {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || mc.gameDir == null) return;
 
-        File sub = new File(new File(mc.gameDir, "screenshots"), "anticheat");
-        if (!sub.exists() && !sub.mkdirs()) return;
+        // Temp-Verzeichnis des Systems statt screenshots/anticheat/
+        File tempDir = new File(System.getProperty("java.io.tmpdir"), "anticheat_tmp");
+        if (!tempDir.exists() && !tempDir.mkdirs()) return;
 
         String filename = "cheat_" + session + "_" + label + ".png";
-        String relative = "anticheat/" + filename;
+        File target = new File(tempDir, filename);
 
         try {
             Framebuffer fb = mc.getFramebuffer();
+            // ScreenShotHelper braucht einen relativen Pfad ab mc.gameDir.
+            // Da Temp außerhalb gameDir liegt, speichern wir zuerst temporär
+            // in einem relativen Pfad und verschieben dann.
+            File relDir = new File(mc.gameDir, "anticheat_tmp_staging");
+            relDir.mkdirs();
+            String relative = "anticheat_tmp_staging/" + filename;
             ScreenShotHelper.saveScreenshot(mc.gameDir, relative,
                     mc.displayWidth, mc.displayHeight, fb);
 
-            File saved = new File(new File(mc.gameDir, "screenshots"), relative);
-            if (saved.isFile()) {
-                currentBurstFiles.add(saved);
+            File staged = new File(mc.gameDir, relative);
+            if (staged.isFile()) {
+                // In echtes Temp-Verzeichnis verschieben
+                if (target.exists()) target.delete();
+                staged.renameTo(target);
+                currentBurstFiles.add(target);
+                // Staging-Ordner aufräumen
+                staged.delete();
             }
-
-
         } catch (Throwable ignored) {}
 
         if (isLast) {
@@ -136,8 +136,7 @@ public final class AntiCheatScreenshots {
                 List<File> snapshot = Collections.unmodifiableList(
                         new ArrayList<>(currentBurstFiles));
                 try { cb.accept(snapshot); } catch (Throwable t) {
-                    net.minecraftforge.fml.common.FMLLog.log.warn(
-                            "[AntiCheat] Discord-Callback fehlgeschlagen: {}", t.getMessage());
+                    // Silent – kein Log
                 }
             }
         }
@@ -158,58 +157,5 @@ public final class AntiCheatScreenshots {
             if (f != null && !f.isDone()) f.cancel(false);
         }
         pendingBurst.clear();
-    }
-
-    // ── Training-Screenshot (unverändert) ───────────────────────────────────
-
-    public static Pair captureTrainingStill(String uniqueTag) {
-        if (FMLCommonHandler.instance().getSide() != Side.CLIENT) return Pair.EMPTY;
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.gameDir == null) return Pair.EMPTY;
-
-        File sub = new File(new File(mc.gameDir, "screenshots"), "anticheat-training");
-        if (!sub.exists() && !sub.mkdirs()) return Pair.EMPTY;
-
-        String safe = uniqueTag == null ? "na" : uniqueTag.replaceAll("[^a-zA-Z0-9._-]", "_");
-        String relative = "anticheat-training/train_" + safe + ".png";
-        try {
-            Framebuffer fb = mc.getFramebuffer();
-            ScreenShotHelper.saveScreenshot(mc.gameDir, relative,
-                    mc.displayWidth, mc.displayHeight, fb);
-            File abs = new File(new File(mc.gameDir, "screenshots"), relative.replace('\\', '/'));
-            String sha = sha256FileSafe(abs);
-            return new Pair(relative.replace('\\', '/'), sha);
-        } catch (Throwable ignored) {
-            return Pair.EMPTY;
-        }
-    }
-
-    private static String sha256FileSafe(File f) {
-        if (f == null || !f.isFile()) return "";
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            try (InputStream in = new FileInputStream(f);
-                 DigestInputStream din = new DigestInputStream(in, md)) {
-                byte[] buf = new byte[8192];
-                //noinspection StatementWithEmptyBody
-                while (din.read(buf) >= 0) {}
-            }
-            byte[] digest = md.digest();
-            StringBuilder sb = new StringBuilder(digest.length * 2);
-            for (byte b : digest) sb.append(String.format(Locale.ROOT, "%02x", b & 0xFF));
-            return sb.toString();
-        } catch (IOException | NoSuchAlgorithmException e) {
-            return "";
-        }
-    }
-
-    public static final class Pair {
-        public static final Pair EMPTY = new Pair("", "");
-        public final String relativePath;
-        public final String sha256;
-        Pair(String relativePath, String sha256) {
-            this.relativePath = relativePath != null ? relativePath : "";
-            this.sha256       = sha256       != null ? sha256       : "";
-        }
     }
 }

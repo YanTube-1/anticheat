@@ -1,0 +1,14 @@
+[
+{
+  "modid": "clientanticheat",
+  "name": "Client AntiCheat Sniffer",
+  "description": "Erkennt bekannte Cheat-Logmuster (Client) und schreibt cheat erkannt in logs/anticheat-client.log",
+  "version": "${version}",
+  "mcversion": "${mcversion}",
+  "authorList": ["Anticheat V1"],
+  "credits": "",
+  "logoFile": "",
+  "url": "",
+  "updateUrl": ""
+}
+]

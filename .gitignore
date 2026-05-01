@@ -15,6 +15,12 @@ logs
 logs/
 *.log
 
+# Lokale LM-Studio-Konfiguration (host/port/model - nie committen)
+lmstudio-local.properties
+
+# Lokaler Gemini-API-Key (veraltet, aber sicherheitshalber drin lassen)
+gemini-local.properties
+
 # IDE
 .idea/
 *.iml

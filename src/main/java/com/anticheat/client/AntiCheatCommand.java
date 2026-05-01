@@ -3,156 +3,117 @@ package com.anticheat.client;
 import java.util.Arrays;
 import java.util.List;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.ICommandSender;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.text.TextComponentString;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraftforge.client.ClientCommandHandler;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.relauncher.Side;
 
 /**
- * Client-Befehle: {@code /anti ...} (nur Client).
+ * /anti – AntiCheat 2.0 Kommandos.
+ *
+ * Subcommands:
+ *   /anti status  – Zeigt ob ein Cheat erkannt wurde (grün/rot)
+ *   /anti info    – Rohe JVM-Zahlen (Klassen, Threads, Deltas)
+ *   /anti reset   – Baseline neu nehmen (z.B. nach Neustart des Cheats)
+ *   /anti help    – Hilfe
  */
 public final class AntiCheatCommand extends CommandBase {
 
-    private AntiCheatCommand() {
-    }
+    private AntiCheatCommand() {}
 
     public static void register() {
-        if (FMLCommonHandler.instance().getSide() != Side.CLIENT) {
-            return;
-        }
+        if (FMLCommonHandler.instance().getSide() != Side.CLIENT) return;
         ClientCommandHandler.instance.registerCommand(new AntiCheatCommand());
     }
 
-    @Override
-    public String getName() {
-        return "anti";
-    }
+    @Override public String getName()  { return "anti"; }
+    @Override public List<String> getAliases() { return Arrays.asList("anticheat", "ac"); }
+    @Override public String getUsage(ICommandSender sender) { return "/anti <status|info|reset|help>"; }
+    @Override public int getRequiredPermissionLevel() { return 0; }
 
     @Override
-    public List<String> getAliases() {
-        return Arrays.asList("anticheat", "cac");
-    }
+    public void execute(MinecraftServer server, ICommandSender sender, String[] args)
+            throws CommandException {
 
-    @Override
-    public String getUsage(ICommandSender sender) {
-        return "/anti help";
-    }
+        String sub = args.length > 0 ? args[0].toLowerCase() : "status";
 
-    @Override
-    public int getRequiredPermissionLevel() {
-        return 0;
-    }
+        switch (sub) {
 
-    @Override
-    public void execute(MinecraftServer server, ICommandSender sender, String[] args) throws CommandException {
-        if (args.length == 0) {
-            help();
-            return;
-        }
-        String a0 = args[0].toLowerCase();
-        if ("help".equals(a0) || "?".equals(a0)) {
-            help();
-            return;
-        }
-        if ("version".equals(a0) || "v".equals(a0)) {
-            msg(ClientAntiCheatMod.NAME + " " + ClientAntiCheatMod.VERSION, TextFormatting.AQUA);
-            return;
-        }
-        if ("status".equals(a0)) {
-            status();
-            return;
-        }
-        if ("scan".equals(a0) || "probe".equals(a0)) {
-            msg("[AntiCheat] Echter Scan - bei Treffer: Log, Chat, Screenshots (0/5/10/30 s).",
-                    TextFormatting.YELLOW);
-            DoomsdayRuntimeProbe.runAll();
-            return;
-        }
-        if ("debug".equals(a0)) {
-            if (args.length < 2) {
-                msg("Debug: " + (AntiCheatDebug.isEnabled() ? "an" : "aus") + " - /anti debug on|off|test",
-                        TextFormatting.GRAY);
-                return;
+            // ── /anti status ─────────────────────────────────────────────────
+            case "status": {
+                InjectionDetector.StatusSnapshot s = InjectionDetector.get().getStatus();
+
+                if (!s.baselineTaken) {
+                    msg("§e[AntiCheat] Baseline noch nicht genommen (warte ~10s nach Start)...");
+                    return;
+                }
+
+                if (s.cheatDetected) {
+                    msg("§c§l⚠  CHEAT ERKANNT  §r§c– " + s.lastAlertReason);
+                    msg("§7Klassen-Delta: §f+" + s.lastDeltaClasses
+                            + " §7| Threads-Delta: §f+" + s.lastDeltaThreads);
+                    msg("§7/anti info §7für vollständige JVM-Zahlen.");
+                } else {
+                    msg("§a§l✔  SAUBER §r§7– kein Inject erkannt.");
+                    msg("§7Klassen aktuell: §f" + s.currentClasses
+                            + " §7| Baseline: §f" + s.baselineClasses
+                            + " §7| Delta: §f+" + (s.currentClasses - s.baselineClasses));
+                }
+                break;
             }
-            String a1 = args[1].toLowerCase();
-            if ("on".equals(a1) || "1".equals(a1) || "true".equals(a1)) {
-                AntiCheatDebug.setEnabled(true);
-                msg("[AntiCheat] Debug an (mehr Details bei test/status).", TextFormatting.GREEN);
-                return;
+
+            // ── /anti info ───────────────────────────────────────────────────
+            case "info": {
+                InjectionDetector.StatusSnapshot s = InjectionDetector.get().getStatus();
+                msg("§6§l─ AntiCheat 2.0 – JVM Info ─");
+                if (s.baselineTaken) {
+                    msg("§7Baseline Klassen : §f" + s.baselineClasses
+                            + "  §7Threads: §f" + s.baselineThreads);
+                    msg("§7Jetzt   Klassen  : §f" + s.currentClasses
+                            + "  §7Threads: §f" + s.currentThreads);
+                    int dc = s.currentClasses - s.baselineClasses;
+                    int dt = s.currentThreads  - s.baselineThreads;
+                    String dcColor = dc >= 500 ? "§c" : dc >= 100 ? "§e" : "§a";
+                    String dtColor = dt >=   4 ? "§c" : dt >=   2 ? "§e" : "§a";
+                    msg("§7Delta Klassen    : " + dcColor + (dc >= 0 ? "+" : "") + dc);
+                    msg("§7Delta Threads    : " + dtColor + (dt >= 0 ? "+" : "") + dt);
+                } else {
+                    msg("§eBaseline noch ausstehend (warte ~10s nach Start).");
+                    msg("§7Jetzt Klassen: §f" + s.currentClasses
+                            + "  §7Threads: §f" + s.currentThreads);
+                }
+                msg("§7Status: " + (s.cheatDetected ? "§c§lCHEAT ERKANNT" : "§a§lSAUBER"));
+                if (s.cheatDetected) {
+                    msg("§7Grund: §f" + s.lastAlertReason);
+                }
+                break;
             }
-            if ("off".equals(a1) || "0".equals(a1) || "false".equals(a1)) {
-                AntiCheatDebug.setEnabled(false);
-                msg("[AntiCheat] Debug aus.", TextFormatting.GRAY);
-                return;
+
+            // ── /anti reset ──────────────────────────────────────────────────
+            case "reset": {
+                InjectionDetector.get().resetBaseline();
+                msg("§e[AntiCheat] Baseline zurückgesetzt. Neue Baseline in ~25-40s (wenn stabil)...");
+                break;
             }
-            if ("test".equals(a1)) {
-                runDebugTest();
-                return;
+
+            // ── /anti help ───────────────────────────────────────────────────
+            default: {
+                msg("§6§l─ AntiCheat 2.0 ─");
+                msg("§f/anti status §7– Cheat erkannt? (Kurzform)");
+                msg("§f/anti info   §7– Vollständige JVM-Zahlen");
+                msg("§f/anti reset  §7– Baseline neu nehmen");
+                break;
             }
-            msg("Unbekannt: /anti debug on|off|test", TextFormatting.RED);
-            return;
         }
-        msg("Unbekannt. /anti help", TextFormatting.RED);
     }
 
-    private static void runDebugTest() {
-        String err = CheatDetector.performSelfTestLogOnly();
-        if (err != null) {
-            msg("[AntiCheat] Selbsttest Log: " + err, TextFormatting.RED);
-        } else {
-            msg("[AntiCheat] Selbsttest: Zeile in anticheat-client.log (SELFTEST).", TextFormatting.GREEN);
-        }
-        boolean verbose = AntiCheatDebug.isEnabled();
-        msg("[AntiCheat] Diagnose (löst keinen Cheat-Alarm aus):", TextFormatting.GOLD);
-        for (String line : DoomsdayRuntimeProbe.collectDiagnosticLines(verbose)) {
-            msg("  " + line, TextFormatting.WHITE);
-        }
-        msg("[AntiCheat] Tipp: /anti debug on - ClassLoader-Details beim nächsten test.", TextFormatting.GRAY);
-    }
+    // ── Helfer ───────────────────────────────────────────────────────────────
 
-    private static void status() {
-        msg("[AntiCheat] Status " + ClientAntiCheatMod.VERSION, TextFormatting.AQUA);
-        msg("  Debug: " + (AntiCheatDebug.isEnabled() ? "an" : "aus"), TextFormatting.WHITE);
-        for (String line : DoomsdayRuntimeProbe.collectDiagnosticLines(AntiCheatDebug.isEnabled())) {
-            msg("  " + line, TextFormatting.WHITE);
-        }
-    }
-
-    private static void help() {
-        msg("--- AntiCheat Client ---", TextFormatting.GOLD);
-        msg("/anti help - diese Hilfe", TextFormatting.WHITE);
-        msg("/anti version - Mod-Version", TextFormatting.WHITE);
-        msg("/anti status - Kurzdiagnose (nur aktueller Stand)", TextFormatting.WHITE);
-        msg("/anti debug on|off - ausführlichere Diagnose", TextFormatting.WHITE);
-        msg("/anti debug test - Log-Selbsttest + Diagnose ohne Alarm", TextFormatting.WHITE);
-        msg("/anti scan - echter Laufzeit-Scan (kann cheat erkannt + 4 Screenshots auslösen)", TextFormatting.WHITE);
-        msg("Aliase: /anticheat, /cac", TextFormatting.GRAY);
-    }
-
-    private static void msg(String text, TextFormatting color) {
-        if (FMLCommonHandler.instance().getSide() != Side.CLIENT) {
-            return;
-        }
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null) {
-            return;
-        }
-        final String t = text;
-        final TextFormatting c = color;
-        mc.addScheduledTask(() -> {
-            TextComponentString comp = new TextComponentString(t);
-            comp.getStyle().setColor(c);
-            if (mc.player != null) {
-                mc.player.sendMessage(comp);
-            } else if (mc.ingameGUI != null && mc.ingameGUI.getChatGUI() != null) {
-                mc.ingameGUI.getChatGUI().printChatMessage(comp);
-            }
-        });
+    private static void msg(String text) {
+        ClientAntiCheatMod.sendAlert(text);
     }
 }

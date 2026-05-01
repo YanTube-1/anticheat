@@ -9,9 +9,23 @@ buildscript {
 }
 apply plugin: "net.minecraftforge.gradle.forge"
 
-version = "1.2.2"
-group = "com.anticheat"
-archivesBaseName = "clientanticheat"
+// ── Variante wählen: gradlew build -Pvariant=trainer|feedback|silent ──────────
+def variant = project.findProperty("variant") ?: "feedback"
+
+def variantVersions = [
+        trainer  : "1.0.0",
+        feedback : "2.0.1",
+        silent   : "2.0.1"
+]
+def variantSrcDirs = [
+        trainer  : "src_trainer",
+        feedback : "src",         // bestehende src/ = V2 Feedback
+        silent   : "src_silent"
+]
+
+version          = variantVersions[variant] ?: "2.0.1"
+group            = "com.anticheat"
+archivesBaseName = "clientanticheat-${variant}"
 
 sourceCompatibility = targetCompatibility = "1.8"
 compileJava {
@@ -19,9 +33,18 @@ compileJava {
     options.encoding = "UTF-8"
 }
 
+def srcBase = variantSrcDirs[variant] ?: "src"
+
+sourceSets {
+    main {
+        java.srcDirs      = ["${srcBase}/main/java"]
+        resources.srcDirs = ["${srcBase}/main/resources"]
+    }
+}
+
 minecraft {
     version = "1.12.2-14.23.5.2847"
-    runDir = "run"
+    runDir  = "run"
     mappings = "stable_39"
 }
 
