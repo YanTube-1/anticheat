@@ -67,10 +67,16 @@ public final class InjectionDetector {
     private volatile boolean mainMenuReached  = false;
 
     /**
-     * Erkennung aussetzen bis zu diesem Zeitstempel (ms).
-     * Wird gesetzt wenn der Spieler einer Welt beitritt (Welt-Lade-Spike vermeiden).
+     * Adaptive Suppression: Erkennung pausiert bis der Klassen-Count nach
+     * Welt-Beitritt wieder stabil ist – kein fester Timer.
+     * suppressStartMs: Zeitpunkt des Welt-Beitritts.
+     * SUPPRESS_MIN_MS: Mindestdauer (Schutz vor zu frühem Ablauf).
+     * SUPPRESS_MAX_MS: Sicherheitsnetz (nie länger als X pausieren).
      */
-    private volatile long suppressUntilMs = 0L;
+    private volatile boolean suppressActive  = false;
+    private volatile long    suppressStartMs = 0L;
+    private static final long SUPPRESS_MIN_MS = 5_000L;
+    private static final long SUPPRESS_MAX_MS = 60_000L;
 
     /**
      * Gleitendes Fenster: { timestamp_ms, loadedClasses }
@@ -129,15 +135,15 @@ public final class InjectionDetector {
      * Ab jetzt ist Minecraft vollständig initialisiert; Baseline in ~10s.
      */
     /**
-     * Erkennung für durationMs aussetzen und das Erkennungs-Fenster leeren.
-     * Wird aufgerufen wenn der lokale Spieler einer Welt beitritt,
-     * damit der normale Welt-Lade-Klassensprung keinen False-Alarm auslöst.
+     * Adaptive Suppression starten.
+     * Kein fester Timer – Erkennung läuft wieder sobald Klassenladerate stabil ist.
+     * Wird aufgerufen wenn der lokale Spieler einer Welt beitritt.
      */
-    public void suppressForWorldLoad(long durationMs) {
-        suppressUntilMs = System.currentTimeMillis() + durationMs;
+    public void suppressForWorldLoad(long ignoredDuration) {
+        suppressActive  = true;
+        suppressStartMs = System.currentTimeMillis();
         synchronized (window) { window.clear(); }
-        LOG.info("=== Erkennung pausiert {}s (Welt-Beitritt) – Fenster geleert ===",
-                durationMs / 1000);
+        LOG.info("=== Adaptive Suppression gestartet (Welt-Beitritt) – Fenster geleert ===");
     }
 
     public void notifyModsLoaded() {
@@ -266,15 +272,35 @@ public final class InjectionDetector {
     // ── Inject-Erkennung ─────────────────────────────────────────────────────
 
     private void detectInject(long now, int curClasses, int curThreads) {
-        // Welt-Beitritt: Erkennung temporär aussetzen
-        if (now < suppressUntilMs) {
-            if (tickCount % 10 == 0) {
-                long secLeft = (suppressUntilMs - now) / 1000;
-                LOG.info("[DETECT] Pause aktiv, noch {}s (Welt-Beitritt)", secLeft);
+        // Adaptive Suppression: pausiert bis Klassenladerate wieder stabil ist
+        if (suppressActive) {
+            long elapsed = now - suppressStartMs;
+
+            // Sicherheitsnetz: nach MAX immer beenden (verhindert endlose Blindheit)
+            if (elapsed >= SUPPRESS_MAX_MS) {
+                suppressActive = false;
+                synchronized (window) { window.clear(); window.add(new long[]{now, curClasses}); }
+                LOG.warn("=== Suppression nach {}s MAX beendet – Erkennung aktiv ===", SUPPRESS_MAX_MS / 1000);
+            } else if (elapsed >= SUPPRESS_MIN_MS) {
+                // Prüfen ob Welt-Ladevorgang stabil ist (= Klassenrate hat sich beruhigt)
+                int[] minMax = windowMinMax(now, STABLE_WINDOW_MS);
+                int delta = (minMax[1] == Integer.MIN_VALUE) ? Integer.MAX_VALUE : minMax[1] - minMax[0];
+                if (delta < STABLE_CLASS_DELTA) {
+                    // Stabil → Suppression beenden, Fenster reset für sauberen Start
+                    suppressActive = false;
+                    synchronized (window) { window.clear(); window.add(new long[]{now, curClasses}); }
+                    LOG.info("=== Suppression beendet nach {}s (Stabilisierung erkannt, Delta={}) ===",
+                            elapsed / 1000, delta);
+                } else {
+                    if (tickCount % 5 == 0) {
+                        LOG.info("[SUPPRESS t+{}s] Noch instabil: Delta={} Klassen/{}s (Ziel<{})",
+                                elapsed / 1000, delta, STABLE_WINDOW_MS / 1000, STABLE_CLASS_DELTA);
+                    }
+                    return;
+                }
+            } else {
+                return; // Mindestzeit noch nicht abgelaufen
             }
-            // Fenster leeren damit angesammelter Spike nicht sofort nach Ablauf zählt
-            synchronized (window) { window.clear(); }
-            return;
         }
         int[] minMax      = windowMinMax(now, WINDOW_MS);
         int   deltaWindow = (minMax[1] == Integer.MIN_VALUE) ? 0 : minMax[1] - minMax[0];

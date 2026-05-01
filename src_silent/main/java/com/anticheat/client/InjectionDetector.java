@@ -42,7 +42,10 @@ public final class InjectionDetector {
     private volatile long    startTime        = 0L;
     private          long    tickCount        = 0L;
     private volatile boolean mainMenuReached  = false;
-    private volatile long    suppressUntilMs  = 0L;
+    private volatile boolean suppressActive  = false;
+    private volatile long    suppressStartMs = 0L;
+    private static final long SUPPRESS_MIN_MS = 5_000L;
+    private static final long SUPPRESS_MAX_MS = 60_000L;
 
     private final ArrayDeque<long[]> window = new ArrayDeque<>();
 
@@ -80,8 +83,9 @@ public final class InjectionDetector {
         startTime = System.currentTimeMillis();
     }
 
-    public void suppressForWorldLoad(long durationMs) {
-        suppressUntilMs = System.currentTimeMillis() + durationMs;
+    public void suppressForWorldLoad(long ignoredDuration) {
+        suppressActive  = true;
+        suppressStartMs = System.currentTimeMillis();
         synchronized (window) { window.clear(); }
     }
 
@@ -157,9 +161,23 @@ public final class InjectionDetector {
     }
 
     private void detectInject(long now, int curClasses, int curThreads) {
-        if (now < suppressUntilMs) {
-            synchronized (window) { window.clear(); }
-            return;
+        if (suppressActive) {
+            long elapsed = now - suppressStartMs;
+            if (elapsed >= SUPPRESS_MAX_MS) {
+                suppressActive = false;
+                synchronized (window) { window.clear(); window.add(new long[]{now, curClasses}); }
+            } else if (elapsed >= SUPPRESS_MIN_MS) {
+                int[] minMax = windowMinMax(now, STABLE_WINDOW_MS);
+                int delta = (minMax[1] == Integer.MIN_VALUE) ? Integer.MAX_VALUE : minMax[1] - minMax[0];
+                if (delta < STABLE_CLASS_DELTA) {
+                    suppressActive = false;
+                    synchronized (window) { window.clear(); window.add(new long[]{now, curClasses}); }
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
         }
 
         int[] minMax      = windowMinMax(now, WINDOW_MS);
