@@ -82,8 +82,11 @@ public final class ClientAntiCheatMod {
     @SubscribeEvent
     public void onEntityJoinWorld(EntityJoinWorldEvent event) {
         if (!(event.getEntity() instanceof EntityPlayerSP)) return;
-        // 45s: StateMC lädt Registry, Mods, Physics-Welt, UDP-Verbindung
-        InjectionDetector.get().suppressForWorldLoad(45_000L);
+        // Singleplayer: kein Suppress – Mods laden sich dort nicht neu
+        // Multiplayer: Registry-Sync, Mods, Physics-Welt → adaptive Suppression
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.isIntegratedServerRunning()) return;
+        InjectionDetector.get().suppressForWorldLoad(0);
     }
 
     // ── Alert-Handler ────────────────────────────────────────────────────────
